@@ -4,7 +4,7 @@
 #include "stdafx.h"
 #include "common.h"
 #include <opencv2/core/utils/logger.hpp>
-
+#include <fstream>
 wchar_t* projectPath;
 
 void testOpenImage()
@@ -373,6 +373,116 @@ void MyCallBackFunc(int event, int x, int y, int flags, void* param)
 		}
 }
 
+void GeometricalFeaturesComputation(int event, int x, int y, int flags, void* param)
+{
+	//More examples: http://opencvexamples.blogspot.com/2014/01/detect-mouse-clicks-and-moves-on-image.html
+	Mat* src = (Mat*)param;
+	if (event == EVENT_LBUTTONDBLCLK)
+	{
+		printf("Pos(x,y): %d,%d  Color(RGB): %d,%d,%d\n",
+			x, y,
+			(int)(*src).at<Vec3b>(y, x)[2],
+			(int)(*src).at<Vec3b>(y, x)[1],
+			(int)(*src).at<Vec3b>(y, x)[0]);
+		Vec3b color = src->at<Vec3b>(y, x);
+		int width = src->cols;
+		int height = src->rows;
+		int area = 0;
+		float r=0, c=0, x=0,y=0;
+
+		for (int i = 0; i < height; i++) {
+			for (int j = 0; j < width; j++) {
+				if (src->at<Vec3b>(i, j) == color) {
+					area++;
+
+					r += i;
+					c += j;
+				}
+			}
+		}
+		r /= area;
+		c /= area;
+		int NP = 0,cmin=INT_MAX,cmax=INT_MIN,rmin=INT_MAX,rmax=INT_MIN;
+
+		for (int i = 1; i < height-1; i++) {
+			for (int j = 1; j < width-1; j++) {
+				if (src->at<Vec3b>(i, j) == color) {
+					x += (i - r) * (j - c);
+					y += (j - c) * (j - c) - (i - r) * (i - r);
+
+					if (j < cmin)
+						cmin = j;
+					if (j > cmax)
+						cmax = j;
+
+					if (i < rmin)
+						rmin = i;
+					if (i > rmax)
+						rmax = i;
+
+					if (src->at<Vec3b>(i - 1, j - 1) != color || src->at<Vec3b>(i - 1, j) != color || src->at<Vec3b>(i - 1, j + 1) != color
+						|| src->at<Vec3b>(i, j - 1) != color || src->at<Vec3b>(i, j + 1) != color || src->at<Vec3b>(i + 1, j - 1) != color
+						|| src->at<Vec3b>(i + 1, j) != color || src->at<Vec3b>(i + 1, j + 1) != color) {
+						NP++;
+					}
+
+				}
+			}
+		}
+		x *= 2;
+		float fi = atan2(x,y)/2,P;
+		P = NP * CV_PI / 4;
+		if (fi < 0) {
+			fi = fi + CV_PI;
+		}
+
+		int ra = r + tan(fi)*(cmin-c);
+		int rb = r + tan(fi) * (cmax - c);
+
+
+		fi = fi * (180 / CV_PI);
+
+		float thinnesRatio = 4 * CV_PI * area / (P * P);
+		float aspectRatio= (float)(cmax - cmin + 1) / (float)(rmax - rmin + 1);
+
+
+		//Projection 
+		Mat dst = Mat(height, width, CV_8UC3,Scalar(255,255,255));
+
+
+		for (int i = 0; i < height; i++) {
+			int horz = 0;
+			for (int j = 0; j < width; j++) {
+				if (src->at<Vec3b>(i, j) == color) {
+					dst.at<Vec3b>(i, horz) = color;
+					horz++;
+				}
+			}
+		}
+
+
+		for (int i = 0; i < width; i++) {
+			int vert = height - 1;
+			for (int j = 0; j < height; j++) {
+				if (src->at<Vec3b>(j, i) == color) {
+					dst.at<Vec3b>(vert, i) = color;
+					vert--;
+				}
+			}
+		}
+
+		imshow("Projection", dst);
+
+		Point A(cmin, ra);
+		Point B(cmax, rb);
+		line(*src, A, B, Scalar(0, 0, 0), 2);
+
+		imshow("El axis", *src);
+		printf("area = %d r = %f c = %f FI = %f P = %f Thinnes = %f Aspect Ratio = %f \n", area,r,c,fi,P,thinnesRatio,aspectRatio);
+		waitKey(0);
+	}
+}
+
 void testMouseClick()
 {
 	Mat src;
@@ -539,27 +649,23 @@ void BGRtoGrayScale() {
 	}
 }
 
-void grayScaleToBlack() {
-	char fname[MAX_PATH];
-	while (openFileDlg(fname))
-	{
-		Mat src = imread(fname, IMREAD_GRAYSCALE);
+Mat grayScaleToBlack(Mat src) {
 		int height = src.rows;
 		int width = src.cols;
 		Mat blackWhite = Mat(height, width, CV_8UC1);
 
 		for (int i = 0; i < height; i++) {
 			for (int j = 0; j < width; j++) {
-				if (src.at<uchar>(i, j) > 50)
+				if (src.at<uchar>(i, j) > 125)
 					blackWhite.at<uchar>(i, j) = 255;
 				else
 					blackWhite.at<uchar>(i, j) = 0;
 			}
 		}
 
-		imshow("BlackWhite", blackWhite);
-		waitKey();
-	}
+		//imshow("BlackWhite", blackWhite);
+		//waitKey();
+		return blackWhite;
 }
 
 void BGRtoHSV() {
@@ -663,8 +769,8 @@ void histogramGenerator() {
 		Mat src = imread(fname, IMREAD_GRAYSCALE);
 		int height = src.rows;
 		int width = src.cols;
-		Mat dst;
-		dst.create(src.size(), src.type());
+		Mat dst = Mat(height,width,CV_8UC1);
+
 
 		float M = width * height;
 		for (int i = 0; i < height; i++) {
@@ -675,6 +781,8 @@ void histogramGenerator() {
 		for (int i = 0; i < 256; i++) {
 			p[i] = h[i] / M;
 		}
+
+		showHistogram("Hist", h, 255, 500);
 
 		int WH = 5;
 		float TH = 0.0003;
@@ -742,7 +850,7 @@ void floydSteinberg() {
 		Mat src = imread(fname, IMREAD_GRAYSCALE);
 		int height = src.rows;
 		int width = src.cols;
-		Mat dst = Mat(width, height, CV_8UC1);
+		Mat dst = src.clone();
 
 		float M = width * height;
 		for (int i = 0; i < height; i++) {
@@ -789,10 +897,10 @@ void floydSteinberg() {
 						}
 						int error = src.at<uchar>(i, j) - dst.at<uchar>(i, j);
 
-						src.at<uchar>(i, j + 1) = saturateInteger(src.at<uchar>(i, j + 1) + 7 * error / 16);
-						src.at<uchar>(i+1, j-1) = saturateInteger(src.at<uchar>(i + 1, j - 1) + 3 * error / 16);
-						src.at<uchar>(i+1, j) = saturateInteger(src.at<uchar>(i + 1, j) + 5 * error / 16);
-						src.at<uchar>(i+1, j + 1) = saturateInteger(src.at<uchar>(i + 1, j + 1) + error / 16);
+						dst.at<uchar>(i, j + 1) = saturateInteger(dst.at<uchar>(i, j + 1) + 7 * error / 16);
+						dst.at<uchar>(i+1, j-1) = saturateInteger(dst.at<uchar>(i + 1, j - 1) + 3 * error / 16);
+						dst.at<uchar>(i+1, j) = saturateInteger(dst.at<uchar>(i + 1, j) + 5 * error / 16);
+						dst.at<uchar>(i+1, j + 1) = saturateInteger(dst.at<uchar>(i + 1, j + 1) + error / 16);
 					}
 				}
 			}
@@ -804,14 +912,337 @@ void floydSteinberg() {
 	}
 }
 
+void geometricalFeatures() {
+	Mat src;
+	// Read image from file 
+	char fname[MAX_PATH];
+	while (openFileDlg(fname))
+	{
+		src = imread(fname);
+		//Create a window
+		namedWindow("My Window", 1);
+
+		//set the callback function for any mouse event
+		setMouseCallback("My Window", GeometricalFeaturesComputation, &src);
+
+		//show the image
+		imshow("My Window", src);
+
+		// Wait until user press some key
+		waitKey(0);
+	}
+}
+
+void labelBlackAndWhiteImageBFS() {
+	Mat src,labels,dst;
+	char fname[MAX_PATH];
+	int di[8] = { 0,-1,-1,-1,0,1,1,1 };
+	int dj[8] = { 1,1,0,-1,-1,-1,0,1 };
+
+	while (openFileDlg(fname)) {
+		src = imread(fname, IMREAD_GRAYSCALE);
+		int height = src.rows;
+		int width = src.cols;
+		int label = 0;
+		labels = Mat(height, width, CV_32SC1,Scalar(0));
+		dst = Mat(height, width, CV_8UC3);
+		for (int i = 1; i < height - 1; i++) {
+			for (int j = 1; j < width - 1; j++) {
+				if (src.at<uchar>(i, j) == 0 && labels.at<int>(i, j) == 0) {
+					label++;
+
+					Vec3b color = Vec3b(rand() % 256, rand() % 256, rand() % 256);
+					std::queue<Point> Q;
+					Q.push(Point(i,j));
+					while (!Q.empty()) {
+						Point q = Q.front();
+						Q.pop();
+						for (int k = 0; k < 8; k++) {
+							if (src.at<uchar>(q.x + di[k], q.y + dj[k]) == 0 && labels.at<int>(q.x + di[k], q.y + dj[k]) == 0) {
+								labels.at<int>(q.x + di[k], q.y + dj[k]) = label;
+								Q.push(Point(q.x + di[k], q.y + dj[k]));
+								dst.at<Vec3b>(q.x + di[k], q.y + dj[k]) = color;
+							}
+						}
+					}
+				}
+			}
+		}
+		printf("%d\n", label);
+		imshow("labeled", dst);
+		waitKey(0);
+	}
+}
 
 
+int minValueFromVector(std::vector<int> vec){
+	int min = INT_MAX;
+	for (int i = 0; i < vec.size(); i++) {
+		if (min > vec[i]) {
+			min = vec[i];
+		}
+	}
+	return min;
+}
+
+void labelBlackAndWhiteImageTwoPass() {
+	Mat src, labels, dst;
+	char fname[MAX_PATH];
+	int di[8] = { -1,-1,-1,0 };
+	int dj[8] = { 1,0,-1,-1 };
+
+	while (openFileDlg(fname)) {
+		src = imread(fname, IMREAD_GRAYSCALE);
+		int height = src.rows;
+		int width = src.cols;
+		int label = 0;
+		labels = Mat(height, width, CV_32SC1, Scalar(0));
+		std::vector<std::vector<int>>edges(1000);
+
+		dst = Mat(height, width, CV_8UC3);
+		for (int i = 1; i < height - 1; i++) {
+			for (int j = 1; j < width - 1; j++) {
+				if (src.at<uchar>(i, j) == 0 && labels.at<int>(i, j) == 0) {
+
+					std::vector<int> L;
+					for (int k = 0; k < 4; k++) {
+						if (labels.at<int>(i + di[k], j + dj[k]) > 0) {
+							L.push_back(labels.at<int>(i + di[k], j + dj[k]));
+						}
+					}
+					if (L.size() == 0) {
+						label++;
+						labels.at<int>(i, j) = label;
+					}
+					else {
+						int x = minValueFromVector(L);
+
+						labels.at<int>(i, j) = x;
+						for (int k = 0; k < L.size(); k++) {
+							if (L[k] != x) {
+								edges[x].push_back(L[k]);
+								edges[L[k]].push_back(x);
+							}
+						}
+
+					}
+				}
+			}
+		}
+
+		int newLabel = 0;
+		std::vector<int> newLabels(label + 1,0);
+
+		for (int i = 0; i < label; i++) {
+			if (newLabels[i] == 0) {
+				newLabel++;
+				std::queue<int> Q;
+				newLabels[i] = newLabel;
+				Q.push(i);
+				while (!Q.empty()) {
+					int x = Q.front();
+					Q.pop();
+					for (int k=0; k < edges[x].size(); k++) {
+						if (newLabels[edges[x][k]] == 0) {
+							newLabels[edges[x][k]] = newLabel;
+							Q.push(edges[x][k]);
+						}
+					}
+				}
+			}
+		}
+		std::vector<Vec3b> colors;
+		colors.push_back(Vec3b(0, 0, 0));
+		for (int i = 1; i < newLabel+1; i++) {
+			colors.push_back(Vec3b(rand() % 256, rand() % 256, rand() % 256));
+		}
+
+		for (int i = 0; i < height; i++) {
+			for (int j = 0; j < width; j++) {
+				labels.at<int>(i, j) = newLabels[labels.at<int>(i, j)];
+				dst.at<Vec3b>(i, j) = colors[labels.at<int>(i, j)];
+			}
+		}
+
+		printf("%d\n", label);
+		imshow("labeled", dst);
+		waitKey(0);
+	}
+}
+
+void borderAlgorithm() {
+
+	Mat_<uchar> img = imread("./Images/triangle_up.bmp", IMREAD_GRAYSCALE);
+	std::vector<int> dirs;
+	std::vector<int> ddirs;
+	std::vector<std::pair<int, int>> pts;
+	int rows = img.rows;
+	int cols = img.cols;
+	Mat_<uchar> dst = Mat_<uchar>(rows, cols,150);
+
+	int di[]= {0,-1,-1,-1,0,1,1,1};
+	int dj[] = {1,1,0,-1,-1,-1,0,1};
+
+	for (int i = 0; i < rows; i++) {
+		for (int j = 0; j < cols; j++) {
+			if (img(i, j) == 0) {
+				pts.push_back({i,j});
+				goto nxt;
+			}
+		}
+	}
+nxt:
+	int dir = 7;
+	int n = 0;
+	while (1) {
+		n = n + 1;
+		if (dir % 2 == 0) {
+			dir = (dir + 7) % 8;
+		}
+		else {
+			dir = (dir + 6) % 8;
+		}
+		for (int k = 0; k < 8; k++) {
+			int dirnow = (dir + k) % 8;
+			int i2 = pts.back().first + di[dirnow];
+			int j2 = pts.back().second + dj[dirnow];
+			if (img(i2, j2) == 0) {
+				pts.push_back({ i2,j2 });
+				dir = dirnow;
+				dirs.push_back(dir);
+				dst(i2, j2) = 0;
+				break;
+			}
+		}
+		if (n > 2 && pts[0] == pts[n - 1] && pts[1] == pts[n])
+			break;
+	}
+	for (int i = 0; i < dirs.size()-1; i++) {
+		ddirs.push_back((dirs[i + 1] - dirs[i] + 8) % 8);
+		printf("%d %d\n", dirs[i],ddirs[i]);
+
+	}
+
+	imshow("imagine", dst);
+	waitKey();
+}
+
+void reconstructImage() {
+
+	std::vector<std::pair<int, int>> pts;
+	int di[] = { 0,-1,-1,-1,0,1,1,1 };
+	int dj[] = { 1,1,0,-1,-1,-1,0,1 };
+
+	std::ifstream file("./Images/reconstruct.txt");
+	if (!file.is_open()) {
+		printf("error opening file");
+	}
+
+	int start_x, start_y;
+	file >> start_x >> start_y;
+
+	int vectorSize;
+	file >> vectorSize;
+
+	std::vector<int> vec(vectorSize);
+	for (int i = 0; i < vectorSize; ++i) {
+		file >> vec[i];
+	}
+	Mat_<uchar> img = imread("./Images/gray_background.bmp", IMREAD_GRAYSCALE);
+	int n = 0;
+
+	for (int i = 0; i < vectorSize; i++) {
+		img(start_x, start_y) = 0;
+		start_x += di[vec[i]];
+		start_y += dj[vec[i]];
+	}
+	imshow("imag", img);
+	waitKey();
+}
+
+Mat_<uchar> dilation(Mat_<uchar> img) {
+	Mat_<uchar> strel(3, 3);
+	strel.setTo(0);
+
+	Mat_<uchar> dst = Mat_<uchar>(img.rows,img.cols,255);
+
+	for (int i = 0; i < img.rows; i++) {
+		for (int j = 0; j < img.cols; j++) {
+			if (img(i, j) == 0) {
+				for (int u = 0; u < strel.rows; u++) {
+					for (int v = 0; v < strel.cols; v++) {
+						//vecinul care este sub elementul (u,v) din strel
+						if (strel(u, v) == 0) {
+							int i2 = i + u + strel.rows / 2;
+							int j2 = j + v + strel.cols / 2;
+							if (i2 >= 0 && i2 < img.rows && j2 < img.cols && j2 >= 0) {
+								dst(i2, j2) = 0;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	imshow("dilation", dst);
+	waitKey();
+
+	return dst;
+}
+
+bool insideImage(Mat src, int i, int j) {
+	if (i > src.rows - 1 || j > src.cols - 1 || i < 0 || j < 0) {
+		return false;
+	}
+	return true;
+}
+
+Mat_ < uchar> erosion(Mat_<uchar> img) {
+	Mat_<uchar> strel(3, 3);
+	strel.setTo(0);
+
+	Mat_<uchar> dst = Mat_<uchar>(img.rows, img.cols,255);
+
+	for (int i = 1; i < img.rows-1; i++) {
+		for (int j = 1; j < img.cols-1; j++) {
+			if (img(i, j) == 0) {
+				bool allblack = true;
+				for (int u = 0; u < strel.rows; u++) {
+					for (int v = 0; v < strel.cols; v++) {
+						//vecinul care este sub elementul (u,v) din strel
+						if (strel(u, v) == 0) {
+							int i2 = i + u + strel.rows / 2;
+							int j2 = j + v + strel.cols / 2;
+							if (insideImage(img, i2, j2)) {
+								if (img(i2, j2) == 255) {
+									allblack = false;
+								}
+							}
+						}
+					}
+				}
+				if (allblack) {
+					dst(i+strel.rows / 2, j+strel.cols / 2) = 0;
+				}
+			}
+		}
+	}
+	imshow("erosion", dst);
+	waitKey();
+	return dst;
+}
 
 int main() 
 {
 	cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_FATAL);
     projectPath = _wgetcwd(0, 0);
 
+	char* imgPath = "./Images/2_Erode/mon1thr1_bw.bmp";
+	Mat_<uchar> img = imread(imgPath, CV_8UC1);
+	img = grayScaleToBlack(img);
+	imshow("prev", img);
+	erosion(img);
+	/*
 	int op;
 	do
 	{
@@ -838,6 +1269,13 @@ int main()
 		printf(" 18 - BGR to HSV\n");
 		printf(" 19 - Histogram\n");
 		printf(" 20 - Floyd-Steinberg\n");
+		printf(" 21 - GeometricalFeatures\n");
+		printf(" 22 - Label Black & White image using BFS\n");
+		printf(" 23 - Label Black & White image using Two-Pass\n");
+		printf(" 24 - Border Algorithm \n");
+		printf(" 25 - Reconstruct image \n");
+		printf(" 26 - dilation \n");
+		printf(" 27 - erosion \n");
 
 		printf(" 0 - Exit\n\n");
 		printf("Option: ");
@@ -904,9 +1342,30 @@ int main()
 			case 20:
 				floydSteinberg();
 				break;
+			case 21:
+				geometricalFeatures();
+				break;
+			case 22:
+				labelBlackAndWhiteImageBFS();
+				break;
+			case 23:
+				labelBlackAndWhiteImageTwoPass();
+				break;
+			case 24:
+				borderAlgorithm();
+				break;
+			case 25:
+				reconstructImage();
+				break;
+			case 26:
+				dilation();
+				break;
+			case 27:
+				erosion();
+				break;
 		}
 	}
 	while (op!=0);
-
+	*/
 	return 0;
 }
