@@ -7,6 +7,8 @@
 #include <fstream>
 wchar_t* projectPath;
 
+using namespace std;
+
 void testOpenImage()
 {
 	char fname[MAX_PATH];
@@ -760,6 +762,29 @@ void showHistogram(const std::string& name, int* hist, const int  hist_cols, con
 	imshow(name, imgHist);
 }
 
+vector<int> calcHist(Mat_<uchar> src) {
+
+	vector<int> hist(256);
+	int height = src.rows;
+	int width = src.cols;
+
+	for (int i = 0; i < height; i++) {
+		for (int j = 0; j < width; j++) {
+			hist[src(i,j)]++;
+		}
+	}
+	return hist;
+}
+
+vector<float> calcNormHist(vector<int> hist,float M) {
+	vector<float> norm(256);
+
+	for (int i = 0; i < 256; i++) {
+		norm[i] = hist[i] / M;
+	}
+	return norm;
+}
+
 void histogramGenerator() {
 	int h[256] = { 0 };
 	float p[256];
@@ -1190,11 +1215,8 @@ Mat_<uchar> dilation(Mat_<uchar> img) {
 	return dst;
 }
 
-bool insideImage(Mat src, int i, int j) {
-	if (i > src.rows - 1 || j > src.cols - 1 || i < 0 || j < 0) {
-		return false;
-	}
-	return true;
+bool insideImage(const Mat&img, int x, int y) {
+	return x >= 0 && x < img.rows&& y >= 0 && y < img.cols;
 }
 
 Mat_ < uchar> erosion(Mat_<uchar> img) {
@@ -1224,6 +1246,9 @@ Mat_ < uchar> erosion(Mat_<uchar> img) {
 				if (allblack) {
 					dst(i+strel.rows / 2, j+strel.cols / 2) = 0;
 				}
+				else {
+					dst(i + strel.rows / 2, j + strel.cols / 2) = 255;
+				}
 			}
 		}
 	}
@@ -1232,16 +1257,638 @@ Mat_ < uchar> erosion(Mat_<uchar> img) {
 	return dst;
 }
 
+float meanValueOfIntensity(vector<float> p) {
+
+	float mean = 0;
+
+	for (int i = 0; i < 256; i++) {
+		mean += i * p[i];
+
+	}
+
+	return mean;
+}
+
+float standardDev(vector<float>p) {
+
+	float mean = meanValueOfIntensity(p);
+	float dev = 0;
+
+	for (int i = 0; i < 256; i++) {
+		dev += (i - mean) * (i - mean) * p[i];
+	}
+	dev = sqrt(dev);
+
+	return dev;
+}
+
+int cumulativeHist(vector<int>h,int bins) {
+	int sum = 0;
+	for (int i = 0; i < bins; i++) {
+		sum += h[i];
+	}
+	return sum;
+}
+
+void basicGlobalThresh(Mat_<uchar> src,vector<int> h) {
+	int Imin = 255, Imax = 0;
+	for (int i = 0; i < 256; i++) {
+		if (h[i] > 0) {
+			Imax = i;
+		}
+		if (h[i] > 0 && i < Imin) {
+			Imin = i;
+		}
+	}
+
+
+
+	vector<float> T;
+
+	T.push_back((Imin + Imax) / 2.0);
+	float N1=0, N2=0;
+
+	for (int i = Imin; i < T[0]; i++) {
+		N1 += h[i];
+	}
+
+	for (int i = T[0] + 1; i < Imax; i++) {
+		N2 += h[i];
+	}
+	float mew1, mew2;
+
+	float g1=0, g2 = 0;
+
+
+	for (int i = Imin; i < T[0]; i++) {
+		g1 += i * h[i];
+	}
+	for (int i = T[0] + 1; i < Imax; i++) {
+		g2 += i * h[i];
+	}
+
+
+
+	mew1 = g1 / N1;
+	mew2 = g2 / N2;
+
+	T.push_back((mew1 + mew2) / 2);
+
+	float err = 0.1;
+
+	int k = T.size()-1;
+
+	printf("%f %f", T[k] - T[k - 1],T[k]);
+
+
+	while (T[k] - T[k-1] > err){
+
+		for (int i = Imin; i < T[k]; i++) {
+			N1 += h[i];
+		}
+		for (int i = T[k] + 1; i < Imax; i++) {
+			N2 += h[i];
+		}
+
+		for (int i = Imin; i < T[k]; i++) {
+			g1 += i * h[i];
+		}
+		for (int i = T[k] + 1; i < Imax; i++) {
+			g2 += i * h[i];
+		}
+
+		T.push_back((mew1 + mew2) / 2);
+		k = T.size()-1;
+	}
+
+	int thresh = T[k];
+
+	for (int i = 0; i < src.rows; i++) {
+		for (int j = 0; j < src.cols; j++) {
+			if (src(i, j) > thresh) {
+				src(i, j) = 255;
+			}
+			else {
+				src(i, j) = 0;
+			}
+		}
+	}
+	imshow("thresh",src);
+	waitKey(0);
+}
+
+vector<int> imageNegative(vector<int> h) {
+	vector<int> result(256);
+	for (int i = 0; i < 256; i++) {
+		result[i] = 255 - h[i];
+	}
+
+	return result;
+}
+
+
+vector<int> histSlide(vector<int> h,int offset) {
+	vector<int> result(256);
+	for (int i = 0; i < 256; i++) {
+		if (h[i] + offset >= 0 && h[i] + offset <= 256) {
+			result[i] = h[i + offset] ;
+		}
+	}
+
+	return result;
+}
+vector<int> histStretchShrink(vector<int> h, int goutmax,int goutmin) {
+	vector<int> result(256);
+	int Imin=255, Imax=0;
+	for (int i = 0; i < 256; i++) {
+		if (h[i] > 0) {
+			Imax = i;
+		}
+		if (h[i] > 0 && i < Imin) {
+			Imin = i;
+		}
+	}
+
+	float ratio = (float)(goutmax - goutmin) / (Imax - Imin);
+
+	for (int i = 0; i < 256; i++) {
+		result[i] = goutmax + (h[i] - Imin) * ratio;
+	}
+
+	int *arr = result.data();
+	showHistogram("result", arr,255,200);
+	waitKey(0);
+	return result;
+}
+
+vector<int> gammaCorrection(vector<int> h, float gamma) {
+	vector<int> result(256);
+	for (int i = 0; i < 256; i++) {
+		result[i] = 255 * pow(h[i] / 255.0, gamma);
+		if (result[i] > 255) {
+			result[i] = 255;
+		}
+		else if(result[i] < 0) {
+			result[i] = 0;
+		}
+	}
+	return result;
+}
+
+Mat_<float> conv(const Mat_<uchar>& src, const Mat_<float>& H) {
+	int height = src.rows;
+	int width = src.cols;
+	int h = H.rows;
+	int w = H.cols;
+	int h_half = h / 2;
+	int w_half = w / 2;
+
+	// Initialize the result matrix with zeros
+	Mat_<float> res(height, width, 0.0f);
+
+	for (int i = 0; i < height; i++) {
+		for (int j = 0; j < width; j++) {
+			float sum = 0.0f;
+			for (int u = 0; u < h; u++) {
+				for (int v = 0; v < w; v++) {
+					int i2 = i + u - h_half;
+					int j2 = j + v - w_half;
+					if (insideImage(src, i2, j2)) {
+						sum += H(u, v) * src(i2, j2);
+					}
+				}
+			}
+			res(i, j) = sum;
+		}
+	}
+
+	return res;
+}
+
+Mat_<uchar> norm(Mat_<float>dst, Mat_<float>H) {
+	//calculati cat este a si b din H
+	//aplicati rescalare pe fiecare valoare din dst si salvati in img din iesire
+	//daca nu exista nr negative a=0,b=sum(h)*255
+	//daca exista nr negative a = suma elementelor negative *255,b = suma elementelor posizitive *255
+	Mat_<uchar> res(dst.rows, dst.cols);
+	int a = 0;
+	int b = 0;
+	int c = 0;
+	int d = 255;
+	int mx = 0;
+	for (int i = 0; i < H.rows; i++) {
+		for (int j = 0; j < H.cols; j++) {
+			if (H(i, j) < 0) {
+				a += H(i, j);
+			}
+			else {
+				b += H(i, j);
+			}
+		}
+	}
+
+	for (int i = 0; i < dst.rows; i++) {
+		for (int j = 0; j < dst.cols; j++) {
+			dst(i, j) = abs(dst(i, j));
+			mx = max(mx, dst(i, j));
+		}
+	}
+	a *= mx;
+	b *= mx;
+	
+	
+	printf("%d %d %d %d\n", a, b, c, d);
+	for (int i = 0; i < dst.rows; i++) {
+		for (int j = 0; j < dst.cols; j++) {
+			res(i, j) = (dst(i, j) - a) * (d - c) / (b - a) + c;
+		}
+	}
+	return res;
+}
+
+Mat_ <uchar> norm2(Mat_<float>dst, Mat_<float>H) {
+	Mat_<uchar> res(dst.rows, dst.cols);
+	int a = 0;
+	int b = 0;
+	int c = 0;
+	int d = 255;
+	for (int i = 0; i < H.rows; i++) {
+		for (int j = 0; j < H.cols; j++) {
+			if (H(i, j) < 0) {
+				a += H(i, j);
+			}
+			else {
+				b += H(i, j);
+			}
+		}
+	}
+	a *= 255;
+	b *= 255;
+	// x in [-sumneg*255,sumpos*255]
+	// abs(x) in [0,max(abs(sumneg),sumpos)*255]
+	//
+
+	for (int i = 0; i < dst.rows; i++) {
+		for (int j = 0; j < dst.cols; j++) {
+			res(i, j) = (abs(dst(i, j)) - a) * (d - c) / (b - a) + c;
+		}
+	}
+
+
+	return res;
+}
+
+Mat_<float> kernel(int hv,int w) {
+	Mat_<float> H = Mat_<float>(1, 2*w+1);
+	int cp = 1;
+	int cp2 = -w-1;
+	for (int i = 0; i < 2*w+1; i++) {
+		
+		if (cp <= w) {
+			H(0, i) = cp;
+			cp++;
+		}
+		else {
+			H(0, i) = cp2;
+			cp2++;
+		}
+	}
+	H(w / 2 + 2) = 0;
+
+
+
+	return H;
+}
+
+Mat_<float> kernel2d(int w) {
+	return Mat::zeros(w, w, CV_8UC1);
+}
+
+Mat_ <uchar> norm3(Mat_<float>dst, Mat_<float>H) {
+	// min -> 255
+	// max -> 0
+	// 0 ->128
+	
+	// x [a,b]  y [c,d]
+
+	//y  = (x - a) * (d - c) / (b - a) + c;
+
+	Mat_<uchar> res(dst.rows, dst.cols);
+	int a = 0;
+	int b = 0;
+	int c = 255;
+	int d = 0;
+
+	for (int i = 0; i < H.rows; i++) {
+		for (int j = 0; j < H.cols; j++) {
+			if (H(i,j) < 0) {
+				a += H(i, j);
+			}
+			else {
+				b += H(i, j);
+			}
+		}
+	}
+	a *= 255;
+	b *= 255;
+
+	for (int i = 0; i < dst.rows; i++) {
+		for (int j = 0; j < dst.cols; j++) {
+			res(i, j) = (dst(i, j) - a) * (d - c) / (b - a) + c;
+		}
+	}
+	return res;
+}
+
+Mat_ <uchar> detectEdge(Mat_<float>con, Mat_<float> H) {
+	int sum = 0;
+	int t = 128;
+	int height = con.rows;
+	int width = con.cols;
+	
+	Mat_<uchar> res = Mat::zeros(height,width,CV_8UC1);
+
+	for (int i = 0; i < height; i++) {
+		for (int j = 0; j < width; j++) {
+			if (abs(con(i,j)) > t) {
+				res(i, j) = 255;
+			}
+			else {
+				res(i, j) = 0;
+			}
+
+		}
+	}
+	return res;
+}
+
+Mat_<uchar> median_filter(Mat_<uchar> img, int w) {
+	//fereastra wxw
+	// sortam vecinii
+	//pixelul din mijloc devine mediana
+	Mat_<uchar> res(img.rows,img.cols);
+	for (int i = 0; i < img.rows; i++) {
+		for (int j = 0; j < img.cols; j++) {
+			vector<int> filter;
+			for (int k = i - w/2; k <= i + w/2; k++) {
+				for (int l = j - w / 2; l <= j + w / 2; l++) {
+					if (insideImage(img, k, l) == false) {
+						continue;
+					}
+					filter.push_back(img(k, l));
+				}
+			}
+			sort(filter.begin(), filter.end());
+			res(i, j) = filter[filter.size() / 2];
+		}
+	}
+	return res;
+}
+
+Mat_<float> createGaussianKernel(int w) {
+	Mat_<float> kernel(w, w);
+	int center = w / 2;
+	float sum = 0.0;
+	float sigma = w / 6.0;
+
+	for (int i = 0; i < w; i++) {
+		for (int j = 0; j < w; j++) {
+			float x = i - center;
+			float y = j - center;
+			kernel(i, j) = (1 / (2 * PI * sigma * sigma)) * exp(-(x * x + y * y) / (2 * sigma * sigma));
+			sum += kernel(i, j);
+		}
+	}
+
+	// Normalize the kernel
+	kernel /= sum;
+
+	return kernel;
+}
+
+
+Mat_<uchar> Gauss2d(const Mat_<uchar>& img, int w) {
+	float sigma = w / 6.0;
+	Mat_<float> kernel = createGaussianKernel(w);
+
+	for (int i = 0; i < kernel.rows; i++) {
+		for (int j = 0; j < kernel.cols; j++) {
+			printf("%f ", kernel(i, j));
+		}
+		printf("\n");
+	}
+
+	// Convert back to uchar for displaying
+	Mat_<float> filteredFloatImg = conv(img, kernel);
+
+
+	// Convert back to uchar for displaying
+	Mat_<uchar> resultImg;
+	filteredFloatImg.convertTo(resultImg, CV_8UC1);
+	return resultImg;
+}
+
+void createGaussian1DKernel(int w, Mat_<float> &kernelX, Mat_<float> &kernelY) {
+
+	int center = w / 2;
+	float sigma = w / 6.0;
+
+	for (int i = 0; i < w; i++) {
+		float x = i - center;
+		kernelX(0,i) = (1 / (sqrt((2 * PI)) * sigma) * exp(-(x * x) / (2 * sigma * sigma)));
+	}
+
+
+	for (int j = 0; j < w; j++) {
+		float y = j - center;
+		kernelY(j,0) = (1 / (sqrt(2 * PI)*sigma) * exp(-(y * y) / (2 * sigma * sigma)));
+	}
+}
+
+
+Mat_<uchar> Gauss1d_1d(Mat_<uchar> img, int w) {
+	//aplicam 10.8
+	//filtram imaginea cu Gy, apoi rezultatul cu Gx
+	//dst = Gx o (Gy o img)
+	Mat_<float> kernelX(1, w);
+	Mat_<float> kernelY(w, 1);
+	createGaussian1DKernel(w,kernelX, kernelY);
+
+	auto conv1 = conv(img, kernelY);
+	auto conv2 = conv(conv1, kernelX);
+
+	Mat_<uchar> resultImg;
+	conv2.convertTo(resultImg, CV_8U);
+	return resultImg;
+}
+
+
+
+/*
+* 1. Create sobel kernels Sx and Sy (float)
+* 
+* 2. Calculate derivative in x and y direction
+* 
+* dx = src o Sx
+* dy = src o Sy
+* 
+* floating point images, without normalization
+* -for visualization imshow("dx", abs(dx)/255)
+* 
+* 3. Calculate magnitude and angle
+* 
+*  mag = sqrt(dx*dx + dy*dy)
+*  angle = atan2(dy,dx) [-pi,pi]
+*  - for visualization imshow( "Mag" ,abs(mag)/255)
+*  4 non-maximum suppression
+*  quantize angles q = ((int)round(angle/(2pi)*8)) % 8
+*  if mag(i,j) > than neighbor its neighbor in direction and (q+4)%8 
+*  mag2(i,j) = mag(i,j)
+*  otherwise erase mag2(i,j) = 0
+*  - for visualization imshow( "Mag2" ,abs(mag2)/255)
+*/
+void sobelKernel(Mat& Sx, Mat& Sy) {
+	Sx = (Mat_<float>(3, 3) << -1, 0, 1, -2, 0, 2, -1, 0, 1);
+
+	Sy = (Mat_<float>(3, 3) << 1, 2, 1, 0, 0, 0, -1, -2, -1);
+}
+
+Mat_<uchar> edgeExtension(static Mat_<uchar> ext){
+	Mat_<uchar> dst = ext.clone();
+	int di[8] = { 0,-1,-1,-1,0,1,1,1 };
+	int dj[8] = { 1,1,0,-1,-1,-1,0,1 };
+
+	for (int i = 0; i < dst.rows; i++) {
+		for (int j = 0; j < dst.cols; j++) {
+			if (dst(i, j) == 255) {
+				std::queue<Point> Q;
+				Q.push(Point(i, j));
+
+				while (!Q.empty()) {
+					Point q = Q.front();
+					Q.pop();
+					for (int k = 0; k < 8; k++) {
+						if (insideImage(dst, q.x + di[k], q.y + dj[k])) {
+							if (dst(q.x + di[k], q.y + dj[k]) == 128) {
+								dst(q.x + di[k], q.y + dj[k]) = 255;
+								Q.push(Point(q.x + di[k], q.y + dj[k]));
+							}
+						}
+					}
+				}
+			}
+			else {
+				dst(i, j) = 0;
+			}
+		}
+	}
+	imshow("edge extension", dst);
+	waitKey(0);
+	return dst;
+}
+
+
+Mat_<uchar> classifyEdges(Mat_<float> mag2) {
+	Mat_<uchar> dst(mag2.rows, mag2.cols);
+	float thigh = 120;
+	float tlow = 80;
+
+	for (int i = 0; i < mag2.rows; i++) {
+		for (int j = 0; j < mag2.cols; j++) {
+			if (mag2(i, j) > thigh) {
+				dst(i, j) = 255;
+			}
+			else if (mag2(i, j) < tlow) {
+				dst(i, j) = 0;
+			}
+			else {
+				dst(i, j) = 128;
+			}
+		}
+	}
+	imshow("edge classification", dst);
+
+	edgeExtension(dst);
+	return dst;
+}
+
+Mat_<float> maximumSupression(Mat_<float> angle, Mat_<float> mag) {
+	Mat_<float> mag2(mag.rows,mag.cols);
+	int di[8] = { 0,-1,-1,-1,0,1,1,1 };
+	int dj[8] = { 1,1,0,-1,-1,-1,0,1 };
+
+	for (int i = 0; i < mag2.rows; i++) {
+		for (int j = 0; j < mag2.cols; j++) {
+			if (angle(i, j) < 0) {
+				angle(i, j) += 2 * PI;
+			}
+			int q = ((int)round(angle(i,j) / (2 * PI) * 8)) % 8;
+			float neighbor1 = 0.0f, neighbor2 = 0.0f;
+			
+			// Get the coordinates of the two neighboring pixels along the gradient direction
+			int ni1 = i + di[q];
+			int nj1 = j + dj[q];
+			int ni2 = i - di[q];
+			int nj2 = j - dj[q];
+
+			if (insideImage(mag, ni1, nj1) && insideImage(mag, ni2, nj2)) {
+				neighbor1 = mag(ni1, nj1);
+				neighbor2 = mag(ni2, nj2);
+
+				if (mag(i, j) > neighbor1 && mag(i, j) > neighbor2) {
+					mag2(i, j) = mag(i, j);
+				}
+				else {
+					mag2(i, j) = 0;
+				}
+			}
+			else {
+				mag2(i, j) = 0;
+			}
+		}
+	}
+	imshow("mag2", abs(mag2) / 255);
+	classifyEdges(mag2);
+	return mag2;
+}
+
+
+Mat_<float> magnitude(Mat_<float> dx, Mat_<float>dy) {
+	Mat_<float> mag(dx.rows, dx.cols);
+	Mat_<float> angle(dx.rows, dx.cols);
+
+	for (int i = 0; i < mag.rows; i++) {
+		for (int j = 0; j < mag.cols; j++) {
+			mag(i, j) = sqrt(dx(i, j) * dx(i, j) + dy(i, j) * dy(i, j));
+			angle(i, j) = atan2(dy(i, j), dx(i, j));
+		}
+	}
+
+	maximumSupression(angle, mag);
+	return mag;
+}
+
+Mat_<float> imageGradient(Mat_<uchar>src) {
+
+	Mat Sx, Sy;
+	sobelKernel(Sx, Sy);
+	auto dx = conv(src, Sx);
+	auto dy = conv(src, Sy);
+	magnitude(dx, dy);
+	return Sx;
+}
+
+
+
 int main() 
 {
 	cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_FATAL);
     projectPath = _wgetcwd(0, 0);
+    projectPath = _wgetcwd(0, 0);
 
-	char* imgPath = "./Images/2_Erode/mon1thr1_bw.bmp";
-	Mat_<uchar> img = imread(imgPath, CV_8UC1);
-	img = grayScaleToBlack(img);
-	imshow("prev", img);
-	erosion(img);
+	Mat_<uchar> src = imread("./Images/saturn.bmp", IMREAD_GRAYSCALE);
+	imageGradient(src);
+
 	/*
 	int op;
 	do
